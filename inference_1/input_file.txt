@@ -1,0 +1,13 @@
+n_mono 433
+stride_length 100
+n_strides 100
+n_temps 4
+spins_coupling 1.0
+alpha 0.5
+inverse_temperature 1.0
+weight -2.23
+initialize_weight 1
+initialize_from_files 1
+conf_file final_config_433.txt
+spins_file final_spinconf_433.txt
+features_file CG_content_433.txt
