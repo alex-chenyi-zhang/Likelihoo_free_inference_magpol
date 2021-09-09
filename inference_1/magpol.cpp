@@ -42,7 +42,7 @@ linear_hash::~linear_hash(){
 
 
 //saw_MC::saw_MC(){}
-saw_MC::saw_MC(int x, int y, int z, float j_spins, float alpha, float inv_T, std::string f1, std::string f2, std::string f3) : uni_R(0.0, 1.0), uni_I_poly(1,x-1), uni_G(0,47-1), uni_spins(-1,1), 
+saw_MC::saw_MC(int x, int y, int z, int s_lag, float j_spins, float alpha, float inv_T, std::string f1, std::string f2, std::string f3) : uni_R(0.0, 1.0), uni_I_poly(1,x-1), uni_G(0,47-1), uni_spins(-1,1), 
                                 uni_I_poly2(0,x-3), uni_I_poly3(0,x-4), local_move_rand(0,3), uni_spins2(0,1), mt(rd()){   //CONSTRUCTOR // mt(rd())--> This for a random seed
     conf_filename = f1;
     spins_filename = f2;
@@ -50,6 +50,9 @@ saw_MC::saw_MC(int x, int y, int z, float j_spins, float alpha, float inv_T, std
     n_mono = x;
     stride = y;
     n_swaps = z;
+    samples_lag = s_lag;
+    n_samples = y*z/samples_lag;
+    if ((y*z)%samples_lag != 0){ n_samples +=1;}
     n_steps = stride * n_swaps; 
     spin_coupling = j_spins;
     alpha_h = alpha;
@@ -64,39 +67,21 @@ saw_MC::saw_MC(int x, int y, int z, float j_spins, float alpha, float inv_T, std
     spins = new int[n_mono];
     trial_spins = new int[n_mono];
     h_fields = new float[n_mono];
+    CpG_fraction = new float[n_mono];
     neighbours = new int*[n_mono];
     trial_neighbours = new int*[n_mono];
     hashed_where = new int[n_mono];
     whos_hashed = new int[n_mono];
+    summary_stats = new float*[n_samples];
     for (int i = 0; i < n_mono; i++){
         coord[i] = new int[3];
         trial_coord[i] = new int[3];
         neighbours[i] = new int[7]; // 1st entry: number of neighbours--> the others are the neighbours if there are any
         trial_neighbours[i] = new int[7];
     }
-    /*for (int i = 0; i < n_mono; i++){
-        coord[i][0] = i;
-        coord[i][1] = 0;
-        coord[i][2] = 0;
-        trial_coord[i][0] = i;
-        trial_coord[i][1] = 0;
-        trial_coord[i][2] = 0;
-        //spins[i] = uni_spins(mt);   // this is potts -1,0,+1
-        spins[i] = uni_spins2(mt)*2-1; // this is ising -1,+1
-        trial_spins[i] = spins[i];
-        h_fields[i] = 10;//(uni_R(mt)-0.5)*max_field_value*2;  
-        neighbours[i][0] = 0;     // starting from a straight rod no one has any neighbour
-        trial_neighbours[i][0] = 0;
-        for (int j = 0; j < 5; j++){
-            neighbours[i][j+1] = -1; // -1 means it's not associated to any of the mono's that are indexed from 0 to n_mono-1
-            trial_neighbours[i][j+1] = -1;
-        }
-    }*/ // I initialize the structure as a fully extended polymer in the x-direction
-      // with the first monomer anchored in the origin.
-
-      // MAGARI A UN CERTO PUNTO PROVA A VEDERE LA DIMERIZATION COME INIZIALIZZAZIONE (VEDI SOKAL E MADRAS)
-
-    //std::cout << "You have initialized your polymer configuration!!!\n";
+    for (int i = 0; i < n_samples; i++){
+        summary_stats[i] = new float[3];
+    }
 
     // Now initialize the array containing the information for the different transformations
     int count = 0;
@@ -135,6 +120,7 @@ saw_MC::~saw_MC(){    // DESTRUCOR
     delete [] h_fields;
     delete [] neighbours;
     delete [] trial_neighbours;
+    delete [] CpG_fraction;
 }
 /*********************************************************************************************/
 
@@ -204,7 +190,7 @@ void saw_MC::initialize_configuration(bool from_files, float weight){
         int i_mono = 0;
         while(std::getline(config_file, line)){
             std::stringstream ss(line);
-            if (!(ss >> h_fields[i_mono])){ break; }
+            if (!(ss >> CpG_fraction[i_mono])){ break; }
             i_mono++;
         }
     }
@@ -213,7 +199,7 @@ void saw_MC::initialize_configuration(bool from_files, float weight){
     }
     config_file.close();
 
-    for (int i_mono = 0; i_mono < n_mono; i_mono++){ h_fields[i_mono] = h_fields[i_mono]*weight;}
+    for (int i_mono = 0; i_mono < n_mono; i_mono++){ h_fields[i_mono] = CpG_fraction[i_mono]*weight;}
 }
 
 
@@ -248,6 +234,32 @@ void saw_MC::set_coords(int **temp_coo){
             coord[i][j] = temp_coo[i][j];
         }
     }
+}
+
+
+
+/*********************************************************************************************/
+float saw_MC::lag_p_spin_autocovariance(int p){ // p is the lag used to calculate the autocovariance of the spins along the chain
+    float avg = 0;
+    float avg_lag = 0;
+    float var = 0;
+    float var_lag = 0;
+    float corr = 0;
+    for (int i_mono = 0; i_mono < n_mono-p; i_mono++){
+        avg += spins[i_mono];
+        avg_lag += spins[i_mono+p];
+        corr += spins[i_mono]*spins[i_mono+p];
+    }
+    avg = avg/(n_mono-p);
+    avg_lag = avg_lag/(n_mono-p);
+    corr = corr/(n_mono-p);
+    for (int i_mono = 0; i_mono < n_mono-p; i_mono++){
+        var += (spins[i_mono]-avg)*(spins[i_mono]-avg);
+        var_lag += (spins[i_mono+p]-avg_lag)*(spins[i_mono+p]-avg_lag);
+    }
+    var = var/(n_mono-p-1);       // the minus 1 is to get an unbiased estimator of the variance. but is it needed thou?
+    var_lag = var_lag/(n_mono-p-1);
+    return (corr - avg*avg_lag)/(sqrt(var*var_lag));
 }
 /*********************************************************************************************/
 /* This function makes the g-th transformation on the k-th pivot point
@@ -574,16 +586,11 @@ float saw_MC::compute_new_energy(int **near){
     float ENE_J = 0;
     for (int i_mono = 0; i_mono < n_mono; i_mono++){
         ENE = ENE - h_fields[i_mono] * spins[i_mono];
-        ENE = ENE * (1-alpha_h);
         for (int j = 0; j < near[i_mono][0]; j++){
-            /*if (( spins[i_mono] == spins[near[i_mono][j+1]] ) && (spins[i_mono] != 0)) { 
-                ENE_J = ENE_J - spin_coupling/2;
-            }*/
             ENE_J = ENE_J - spins[i_mono] * spins[near[i_mono][j+1]] * spin_coupling/2;
         }
-        ENE = ENE + ENE_J * alpha_h;
     }
-    return ENE;
+    return ENE*(1-alpha_h) + ENE_J*alpha_h;
 }
 
 
@@ -681,20 +688,37 @@ void saw_MC::run(){
     float delta_energy;
     float acceptance;
     float magnet;
-    for (int i = stride*done_strides; i < stride*(done_strides+1); i++){
-        //Ree2[i] = coord[n_mono-1][0]*coord[n_mono-1][0]+coord[n_mono-1][1]*coord[n_mono-1][1]+coord[n_mono-1][2]*coord[n_mono-1][2];
-        Rg2[i] = gyr_rad_square();
-        energies[i] = energy;
-        magnet = 0;
+    int lag = 5;
+
+    Rg2[stride*done_strides] = gyr_rad_square();
+    energies[stride*done_strides] = energy;
+    magnet = 0;
+    for (int i_mono = 0; i_mono < n_mono; i_mono++){
+        magnet += spins[i_mono];
+    }
+    magnetization[stride*done_strides] = magnet/n_mono;
+    // Here I compute the samples for the summary statistics used in the synthetic likelihood part
+    if (stride*done_strides%samples_lag == 0){
+        summary_stats[i_sample][0] = magnetization[stride*done_strides];
+        
+        float overlap = 0;
         for (int i_mono = 0; i_mono < n_mono; i_mono++){
-            magnet += spins[i_mono];
+            overlap += spins[i_mono]*CpG_fraction[i_mono];
         }
-        magnetization[i] = magnet/n_mono;
+        summary_stats[i_sample][1] = overlap/n_mono;
+
+        summary_stats[i_sample][2] = lag_p_spin_autocovariance(lag);
+        i_sample++;
+    }
+
+
+    for (int i = stride*done_strides+1; i < stride*(done_strides+1); i++){
         pivot_point    = uni_I_poly(mt);
         transformation = uni_G(mt);
+
         try_pivot(pivot_point,transformation);
         is_still_saw = check_saw(pivot_point);
-        if (i%10000 == 0){
+        if ((i-1)%10000 == 0){
             std::cout <<"i_step = "<< i << ' '<<pivot_point << ' ' << transformation <<' '<< is_still_saw << "  invT = " << beta_temp << "\n";
         }
 
@@ -713,10 +737,6 @@ void saw_MC::run(){
                 add_to_hash_table(i_mono, trial_coord[i_mono]);
             }
         }
-
-        
-
-        
 
         //if(is_still_saw){
         for (int i_local = 0; i_local < n_mono-1; i_local++){
@@ -767,10 +787,30 @@ void saw_MC::run(){
         }
         
         spins_MC();  // here I run MC on the spin d.o.f's with the current polymer configuration
+
+        Rg2[i] = gyr_rad_square();
+        energies[i] = energy;
+        magnet = 0;
+        for (int i_mono = 0; i_mono < n_mono; i_mono++){
+            magnet += spins[i_mono];
+        }
+        magnetization[i] = magnet/n_mono;
+
+        // Here I compute the samples for the summary statistics used in the synthetic likelihood part
+        if (i%samples_lag == 0){
+            summary_stats[i_sample][0] = magnetization[i];
+            
+            float overlap = 0;
+            for (int i_mono = 0; i_mono < n_mono; i_mono++){
+                overlap += spins[i_mono]*CpG_fraction[i_mono];
+            }
+            summary_stats[i_sample][1] = overlap/n_mono;
+
+            summary_stats[i_sample][2] = lag_p_spin_autocovariance(lag);
+            i_sample++;
+        }
     }
 
-    //std::cout << "Number of successful pivot moves: "<< n_pivots << "\n";
-    //std::cout << "Number of actually accepted pivot moves: "<< n_acc << "\n";
     done_strides++;
 }
 
@@ -780,11 +820,13 @@ void saw_MC::write_results_on_file(){
     std::ofstream myfile3;
     std::ofstream myfile4;
     std::ofstream myfile5;
+    std::ofstream myfile6;
     myfile.open ("final_config_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) + ".txt");
     myfile2.open ("RG2_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) + ".txt");
     myfile3.open ("energies_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) + ".txt");
     myfile4.open ("final_spinconf_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) +".txt");
     myfile5.open ("magnetization_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) + ".txt");
+    myfile6.open ("summary_stats_" + std::__cxx11::to_string(n_mono) + ".txt");
     /*myfile.open ("final_config_" + std::to_string(n_mono) + ".txt");// + "_T_" + std::to_string(beta_temp) + ".txt");
     myfile2.open ("RG2_" + std::to_string(n_mono) + ".txt");// + "_T_" + std::to_string(beta_temp) + ".txt");
     myfile3.open ("energies_" + std::to_string(n_mono) + ".txt");// + "_T_" + std::to_string(beta_temp) + ".txt");
@@ -802,15 +844,54 @@ void saw_MC::write_results_on_file(){
         myfile3 << energies[i] << "\n";
         myfile5 << magnetization[i] << "\n";
     }
+    for (int i = 0; i < n_samples; i++){
+        myfile6 << summary_stats[i][0] << ' ' << summary_stats[i][1] << ' ' << summary_stats[i][2] << "\n";
+    }
     myfile.close();
     myfile2.close();
     myfile3.close();
     myfile4.close();
     myfile5.close();
+    myfile5.close();
+}
+
+void saw_MC::write_results_on_file2(){
+    //std::ofstream myfile;
+    //std::ofstream myfile2;
+    std::ofstream myfile3;
+    //std::ofstream myfile4;
+    //std::ofstream myfile5;
+    //myfile.open ("final_config_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) + ".txt");
+    //myfile2.open ("RG2_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) + ".txt");
+    myfile3.open ("energies2_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) + ".txt");
+    //myfile4.open ("final_spinconf_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) +".txt");
+    //myfile5.open ("magnetization_" + std::__cxx11::to_string(n_mono) + ".txt");// + "_T_" + std::__cxx11::to_string(beta_temp) + ".txt");
+    /*myfile.open ("final_config_" + std::to_string(n_mono) + ".txt");// + "_T_" + std::to_string(beta_temp) + ".txt");
+    myfile2.open ("RG2_" + std::to_string(n_mono) + ".txt");// + "_T_" + std::to_string(beta_temp) + ".txt");
+    myfile3.open ("energies_" + std::to_string(n_mono) + ".txt");// + "_T_" + std::to_string(beta_temp) + ".txt");
+    myfile4.open ("final_spinconf_" + std::to_string(n_mono) + ".txt");// + "_T_" + std::to_string(beta_temp) +".txt");
+    myfile5.open ("magnetization_" + std::to_string(n_mono) + ".txt");// + "_T_" + std::to_string(beta_temp) + ".txt");*/
+    /*for (int i = 0; i < n_mono; i++){
+        for(int j = 0; j < 3; j++){
+            myfile << coord[i][j] << ' ';
+        }
+        myfile << "\n";
+        myfile4 << spins[i] << "\n";
+    }*/
+    for (int i = 0; i < n_steps; i++){
+        //myfile2 << Rg2[i] << "\n";
+        myfile3 << energies[i] << "\n";
+        //myfile5 << magnetization[i] << "\n";
+    }
+    //myfile.close();
+    //myfile2.close();
+    myfile3.close();
+    //myfile4.close();
+    //myfile5.close();
 }
 
 
-multiple_markov_chains::multiple_markov_chains(std::string input_filename){
+multiple_markov_chains::multiple_markov_chains(std::string input_filename): mer_twist(rand_dev()){
     std::fstream file_in;
     file_in.open(input_filename, std::ios::in);
     if (file_in.is_open()){
@@ -829,8 +910,10 @@ multiple_markov_chains::multiple_markov_chains(std::string input_filename){
                 tmp >> stride_length;
             else if (a=="n_temps")
                 tmp >> n_temps;
-            else if (a=="n_strides")
-                tmp >> n_strides;
+            else if (a=="n_samples")
+                tmp >> n_samples;
+            else if (a=="samples_lag")
+                tmp >> samples_lag;
             else if (a=="spins_coupling")
                 tmp >> J;
             else if (a=="alpha")
@@ -850,7 +933,16 @@ multiple_markov_chains::multiple_markov_chains(std::string input_filename){
 
         };
         file_in.close();
+
     }
+
+
+    weight_distribution = std::normal_distribution<double>(0.0, 5.0);
+    uni_temps = std::uniform_int_distribution<int>(0, n_temps-2);
+    uni_01 = std::uniform_real_distribution<double>(0.0, 1.0);
+
+    if (!initialize_weight){ regression_weight = weight_distribution(mer_twist); }
+    std::cout << "Weight value: " << regression_weight << "\n";
 
     
     temporary_spins1 = new int[n_mono];
@@ -877,22 +969,17 @@ multiple_markov_chains::~multiple_markov_chains(){
 
 void multiple_markov_chains::run_MMC(){
     int accepted_swaps = 0;
-    std::random_device rand_dev;                         // generates a random seed, to initialize a random engine
-    std::mt19937 mer_twist(rand_dev());
-    std::uniform_real_distribution<double> uni_01(0.0, 1.0);  // uniform in [0,1]. Used to acc/rej MC move
-    std::uniform_int_distribution<int> uni_temps(0, n_temps-2);
-    std::normal_distribution<double> weight_distribution(0.0,5.0); // if no weight is given in input generate a random starting value
     saw_MC** simulations = new saw_MC*[n_temps];
+    int n_strides = (n_samples*samples_lag)/stride_length;
+    std::cout << "n_strides: " << n_strides << "\n";
     // do many parallel simulations with inverse temperatures uniformly spaced between 0 and the value of interest
     for (int i = 0; i < n_temps; i++){
         float inv_T = beta_temp-(beta_temp-min_inv_temp)*i/(n_temps-1);
-        simulations[i] = new saw_MC(n_mono, stride_length, n_strides, J, alpha, inv_T, conf_filename, spins_filename, features_filename); 
+        simulations[i] = new saw_MC(n_mono, stride_length, n_strides, samples_lag, J, alpha, inv_T, conf_filename, spins_filename, features_filename); 
     }
 
     // Here we initialize the simulations. Can do it either from files or to 
     // straight rod with random spins (if from files is false)
-    if (!initialize_weight){ regression_weight = weight_distribution(mer_twist); }
-    std::cout << "Weight value: " << regression_weight << "\n";
     for (int i_temps = 0; i_temps < n_temps; i_temps++){
         simulations[i_temps]->initialize_configuration(from_files, regression_weight);
     }
@@ -929,10 +1016,9 @@ void multiple_markov_chains::run_MMC(){
 
     std::cout << "The number of accepted swaps was " << accepted_swaps << " out of " << n_strides << "\n";
 
-    /*for (int i_temps = 0; i_temps < n_temps; i_temps++){
-        simulations[i_temps]->write_results_on_file();
-    }*/
+    
     simulations[0]->write_results_on_file();
+    //simulations[1]->write_results_on_file2();
 }
 
 

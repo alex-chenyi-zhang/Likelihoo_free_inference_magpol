@@ -23,7 +23,10 @@ class saw_MC{
     int stride, n_swaps;                           // in the Multiple Markov Chain stride is the number of MC moves before attempting a swap
                                                    // n_steps is set equal to n_swaps*stride 
     int done_strides = 0;                          // incremented every time a stride is done. Needed to properly save the observables we need
+    int i_sample = 0;
     int n_mono, n_steps;
+    int n_samples;
+    int samples_lag;
     int ** coord;                                  // 2D array that contains the coordinates of the monomers
     int ** trial_coord;
     int * Ree2;                                    // Here we store the squared end-to-end distance
@@ -31,6 +34,7 @@ class saw_MC{
     int * spins;                                   // Here I store the spin congiguration of the Ising/Potts subsystem
     int * trial_spins;
     float * h_fields;                              // Values of the local fields in the Ising/Potts model
+    float * CpG_fraction;
     float max_field_value = 2;
     float spin_coupling;
     float energy = 0;
@@ -48,6 +52,7 @@ class saw_MC{
                                                       probably a trial_neighbour matrix will be needed*/
     int ** trial_neighbours;
 
+    float ** summary_stats;
     std::random_device rd;                         // generates a random seed, to initialize a random engine
     std::mt19937 mt;
     std::uniform_real_distribution<double> uni_R;  // uniform in [0,1]. Used to acc/rej MC move
@@ -68,7 +73,7 @@ class saw_MC{
     int n_hashes;                                  // Tells you in each self_av. check how many monomers you inserted in the hash table
     public:
         //saw_MC(void);                  // dummy constructor, needed if you want use arrays of this type and call the actual constructors separately after memory allocation
-        saw_MC(int,int,int,float,float,float,std::string,std::string,std::string);                           //constructor
+        saw_MC(int,int,int,int,float,float,float,std::string,std::string,std::string);                           //constructor
         ~saw_MC();                                 //destructor
         void try_pivot(int,int);
         int hash_function(int*,int,int*);
@@ -84,7 +89,8 @@ class saw_MC{
         void crankshaft_90_270(int);
         void run(void);      
         void write_results_on_file(void);   
-        float gyr_rad_square(void);    
+        float gyr_rad_square(void);  
+        float lag_p_spin_autocovariance(int);  
         float get_beta(void);
         float get_ene(void);
         void copy_spins(int*);
@@ -92,6 +98,8 @@ class saw_MC{
         void set_spins(int*);
         void set_coords(int**);
         void initialize_configuration(bool,float); // if the argument is false just initialize from straight rod and random spins, otherwise from input files
+
+        void write_results_on_file2(void); 
 };
 
 
@@ -101,9 +109,9 @@ class multiple_markov_chains{
     bool from_files;
     bool initialize_weight;              // If true read the weight value from the input file, otherwise generate randomly
     float regression_weight = 1.0;
-    int n_mono, n_strides, stride_length, n_temps;
+    int n_mono, n_samples, stride_length, n_temps, samples_lag;
     float J, alpha, beta_temp;
-    float min_inv_temp = 0.2;
+    float min_inv_temp = 0.6;
     std::string conf_filename;
     std::string spins_filename;
     std::string features_filename;
@@ -111,6 +119,11 @@ class multiple_markov_chains{
     int * temporary_spins2;
     int ** temporary_coords1;
     int ** temporary_coords2;
+    std::random_device rand_dev;                         // generates a random seed, to initialize a random engine
+    std::mt19937 mer_twist;
+    std::uniform_real_distribution<double> uni_01;  // uniform in [0,1]. Used to acc/rej MC move
+    std::uniform_int_distribution<int> uni_temps;
+    std::normal_distribution<double> weight_distribution;
     //saw_MC** simulations;
     /*std::random_device rand_dev;                         // generates a random seed, to initialize a random engine
     std::mt19937 mer_twist;
