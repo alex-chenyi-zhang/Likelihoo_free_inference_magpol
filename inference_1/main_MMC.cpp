@@ -78,14 +78,17 @@ double log_synth_likelihood(double invm[][3], double mean[], double data[], doub
 /**************************************************************************************************************************/
 int main(int argc, char* argv[]){
     std::stringstream string1(argv[1]);
+    std::stringstream string2(argv[2]);
     std::string input_filename = "input_file.txt";
+    int n_param_samples;// = 2000; //number of samples in the parameter space. sampling done with likelihood free techniques
+
     string1 >> input_filename;
+    string2 >> n_param_samples;
 
     std::random_device rand_dev;                         // generates a random seed, to initialize a random engine
     std::mt19937 mer_twist(rand_dev());
     std::uniform_real_distribution<double> uni_01;
     double delta_w = 0.3; // to pick trial weight in the MCMC choose w_trial = w_old + delta_weight*(uni_01(mer_twist)*2-1)
-    int n_param_samples = 2000; //number of samples in the parameter space. sampling done with likelihood free techniques
     double ** ss_mean_estimates = new double*[n_param_samples];    // here there are the mean estimates of the summary statistics for each MCMC step in parameter space 
     double * ss_abs_covariance_determinant = new double[n_param_samples];  // here the same thing as above but it's the module of the determinant of the empirical covariance matrix
     double * weight_series = new double[n_param_samples];
