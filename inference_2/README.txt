@@ -1,0 +1,2 @@
+Here I add the possibility for inference with more samples. Hopefully this allow more narrow distributions of the parameter samples.
+To achieve this just sum the log-synthetic-likelihoods for the different samples. 
